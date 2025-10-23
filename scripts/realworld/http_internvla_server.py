@@ -3,6 +3,12 @@ import json
 import os
 import time
 from datetime import datetime
+import sys
+from pathlib import Path
+# Add project path
+project_root = Path(".")
+sys.path.insert(0, str(project_root))
+sys.path.insert(0, str(project_root / 'src/diffusion-policy'))
 
 import numpy as np
 from flask import Flask, jsonify, request
@@ -85,18 +91,21 @@ if __name__ == '__main__':
     parser.add_argument("--resize_w", type=int, default=384)
     parser.add_argument("--resize_h", type=int, default=384)
     parser.add_argument("--num_history", type=int, default=8)
+    parser.add_argument("--plan_step_gap", type=int, default=8)
     args = parser.parse_args()
 
     args.camera_intrinsic = np.array(
         [[386.5, 0.0, 328.9, 0.0], [0.0, 386.5, 244, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]]
     )
     agent = InternVLAN1AsyncAgent(args)
-    agent.step(
-        np.zeros((480, 640, 3)),
-        np.zeros((480, 640)),
-        np.eye(4),
-        "hello",
-    )
+    # Warm up model
+    print("Warming up model...")
+    dummy_rgb = np.zeros((480, 640, 3), dtype=np.uint8)
+    dummy_depth = np.zeros((480, 640), dtype=np.float32)
+    dummy_pose = np.eye(4)
+    agent.reset()
+    agent.step(dummy_rgb, dummy_depth, dummy_pose, "hello", intrinsic=args.camera_intrinsic)
+    print("Model loaded successfully!")
     agent.reset()
 
     app.run(host='0.0.0.0', port=5801)

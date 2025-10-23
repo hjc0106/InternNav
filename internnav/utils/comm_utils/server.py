@@ -4,12 +4,17 @@ import importlib.util
 import pickle
 import sys
 from typing import Dict
-
+from pathlib import Path
+# Add project path
+project_root = Path('.')
+sys.path.insert(0, str(project_root))
+sys.path.insert(0, str(project_root / 'src/diffusion-policy'))
 import uvicorn
 from fastapi import APIRouter, FastAPI, HTTPException, status
 
 from internnav.agent.base import Agent
 from internnav.configs.agent import InitRequest, ResetRequest, StepRequest
+
 
 
 class AgentServer:
