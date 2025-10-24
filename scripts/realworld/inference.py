@@ -12,7 +12,7 @@ project_root = Path(".")
 sys.path.insert(0, str(project_root))
 sys.path.insert(0, str(project_root / 'src/diffusion-policy'))
 
-from internnav.agent.internvla_n1_agent_realworld import InternVLAN1AsyncAgent
+from internnav.agent.internvla_n1_agent_realworld import InternVLAN1AsyncAgent, Int8InternVLAN1AsyncAgent, Int4InternVLAN1AsyncAgent
 
 
 class Args:
@@ -37,7 +37,7 @@ print(f"Image size: {args.resize_w}x{args.resize_h}")
 print(f"History frames: {args.num_history}")
 
 print("Loading model...")
-agent = InternVLAN1AsyncAgent(args)
+agent = Int8InternVLAN1AsyncAgent(args)
 
 # Warm up model
 print("Warming up model...")

@@ -3,8 +3,33 @@ from typing import Optional, Tuple
 
 import torch
 import torch.nn as nn
-from transformers.modeling_utils import apply_chunking_to_forward
+# from transformers.modeling_utils import apply_chunking_to_forward
 
+
+try:
+    from transformers.modeling_utils import apply_chunking_to_forward
+except ImportError:
+    def apply_chunking_to_forward(forward_fn, chunk_size: int, chunk_dim: int, *input_tensors):
+        """
+        将输入按chunk_dim维度分块，逐块应用forward_fn，最后合并结果
+        用于减少内存占用
+        """
+        if chunk_size <= 0 or len(input_tensors) == 0:
+            return forward_fn(*input_tensors)
+        
+        tensor_shape = input_tensors[0].shape[chunk_dim]
+        output_chunks = []
+        
+        for chunk_start in range(0, tensor_shape, chunk_size):
+            chunk_end = min(chunk_start + chunk_size, tensor_shape)
+            input_chunks = [
+                tensor.narrow(chunk_dim, chunk_start, chunk_end - chunk_start) if tensor is not None else None
+                for tensor in input_tensors
+            ]
+            output_chunk = forward_fn(*input_chunks)
+            output_chunks.append(output_chunk)
+        
+        return torch.cat(output_chunks, dim=chunk_dim)
 
 def gelu(x):
     """Implementation of the gelu activation function.
