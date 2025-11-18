@@ -6,11 +6,11 @@ import os
 from collections import defaultdict
 
 import numpy as np
-from internutopia.core.util import is_in_container
 from PIL import Image, ImageDraw
 from scipy.ndimage import binary_dilation
 
 from internnav.utils.common_log_util import common_logger as log
+from internnav.utils.geometry_utils import quat_to_euler_angles
 
 
 def create_robot_mask(topdown_global_map_camera, mask_size=20):
@@ -243,6 +243,8 @@ def load_data(dataset_root_dir, split, filter_same_trajectory=True, filter_stair
 
 def load_scene_usd(mp3d_data_dir, scan):
     """Load scene USD based on the scan"""
+    from internutopia.core.util import is_in_container
+
     find_flag = False
     for root, dirs, files in os.walk(os.path.join(mp3d_data_dir, scan)):
         target_file_name = 'fixed_docker.usd' if is_in_container() else 'fixed.usd'
@@ -342,7 +344,6 @@ def draw_trajectory(array, obs_lst, reference_path):
     import matplotlib.pyplot as plt
     import numpy as np
     from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
-    from omni.isaac.core.utils.rotations import quat_to_euler_angles
 
     from internnav.evaluator.utils.path_plan import world_to_pixel
 

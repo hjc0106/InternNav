@@ -1,4 +1,3 @@
-# from scripts.eval.configs.agent import *
 from internnav.configs.agent import AgentCfg
 from internnav.configs.evaluator import (
     EnvCfg,
@@ -36,7 +35,7 @@ eval_cfg = EvalCfg(
         },
     ),
     env=EnvCfg(
-        env_type='vln_multi',
+        env_type='internutopia',
         env_settings={
             'use_fabric': False,  # Please set use_fabric=False due to the render delay;
             'headless': True,

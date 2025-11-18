@@ -2,6 +2,7 @@ import sys
 from enum import Enum
 from pathlib import Path
 from time import time
+from typing import Dict, List
 
 import numpy as np
 
@@ -12,6 +13,7 @@ from internnav.evaluator.utils.config import get_lmdb_path
 from internnav.evaluator.utils.data_collector import DataCollector
 from internnav.evaluator.utils.dataset import ResultLogger, split_data
 from internnav.evaluator.utils.eval import generate_episode
+from internnav.evaluator.utils.visualize_util import VisualizeUtil
 from internnav.projects.dataloader.resumable import ResumablePathKeyDataloader
 from internnav.utils import common_log_util, progress_log_multi_util
 from internnav.utils.common_log_util import common_logger as log
@@ -23,29 +25,6 @@ class runner_status_code(Enum):
     NOT_RESET = 3
     TERMINATED = 2
     STOP = 4
-
-
-def transform_action_batch(actions, flash=False):
-    transformed_actions = []
-    for action in actions:
-        if 'ideal_flag' in action.keys():
-            ideal_flag = action['ideal_flag']
-            if flash:
-                assert ideal_flag is True
-        else:
-            ideal_flag = False
-        if not ideal_flag:
-            transformed_actions.append({'h1': {'vln_dp_move_by_speed': action['action'][0]}})
-            continue
-        a = action['action']
-        if a == 0 or a == [0] or a == [[0]]:
-            transformed_actions.append({'h1': {'stop': []}})
-        elif a == -1 or a == [-1] or a == [[-1]]:
-            transformed_actions.append({'h1': {'stand_still': []}})
-        else:
-            move = f"move_by_{'discrete' if not flash else 'flash'}"
-            transformed_actions.append({'h1': {move: a}})  # discrete e.g. [3]
-    return transformed_actions
 
 
 @Evaluator.register('vln_multi')
@@ -61,12 +40,12 @@ class VlnMultiEvaluator(Evaluator):
         progress_log_multi_util.init(self.task_name, self.dataloader.size)
         self.total_path_num = self.dataloader.size
         progress_log_multi_util.progress_logger_multi.info(
-            f'start eval dataset: {self.task_name}, total_path:{self.dataloader.size}'  # noqa: E501
+            f'start eval dataset: {self.task_name}, total_path: {self.dataloader.size}'  # noqa: E501
         )
         # generate episode
         episodes = generate_episode(self.dataloader, config)
         if len(episodes) == 0:
-            log.info("No more episodes to evaluate")
+            log.info("No more episodes to evaluate. Episodes are saved in data/sample_episodes/")
             sys.exit(0)
         config.task.task_settings.update({'episodes': episodes})
         self.env_num = config.task.task_settings['env_num']
@@ -94,6 +73,9 @@ class VlnMultiEvaluator(Evaluator):
         set_seed_model(0)
         self.data_collector = DataCollector(self.dataloader.lmdb_path)
         self.robot_flash = config.task.robot_flash
+        self.save_to_json = config.eval_settings['save_to_json']
+        self.vis_output = config.eval_settings['vis_output']
+        self.visualize_util = VisualizeUtil(self.task_name, fps=6)
 
     @property
     def ignore_obs_attr(self):
@@ -130,6 +112,28 @@ class VlnMultiEvaluator(Evaluator):
         ]
         return obs
 
+    def _transform_action_batch(self, actions: List[Dict], flash=False):
+        transformed_actions = []
+        for action in actions:
+            if 'ideal_flag' in action.keys():
+                ideal_flag = action['ideal_flag']
+                if flash:
+                    assert ideal_flag is True
+            else:
+                ideal_flag = False
+            if not ideal_flag:
+                transformed_actions.append({'h1': {'vln_dp_move_by_speed': action['action'][0]}})
+                continue
+            a = action['action']
+            if a == 0 or a == [0] or a == [[0]]:
+                transformed_actions.append({'h1': {'stop': []}})
+            elif a == -1 or a == [-1] or a == [[-1]]:
+                transformed_actions.append({'h1': {'stand_still': []}})
+            else:
+                move = f"move_by_{'discrete' if not flash else 'flash'}"
+                transformed_actions.append({'h1': {move: a}})  # discrete e.g. [3]
+        return transformed_actions
+
     def get_action(self, obs, action):
         # process obs
         obs = np.array(obs)
@@ -141,8 +145,8 @@ class VlnMultiEvaluator(Evaluator):
         obs = self.remove_obs_attr(obs)
         if not np.logical_and.reduce(self.runner_status == runner_status_code.WARM_UP):
             action = self.agent.step(obs)
-            log.info(f'now action:{len(action)} ,{action}, fake_obs_index:{fake_obs_index}')
-            action = transform_action_batch(action, self.robot_flash)
+            log.info(f'now action: {len(action)}, {action}, fake_obs_index: {fake_obs_index}')
+            action = self._transform_action_batch(action, self.robot_flash)
         # change warm_up
         action = np.array(action)
         action[self.runner_status == runner_status_code.WARM_UP] = {'h1': {'stand_still': []}}
@@ -202,9 +206,7 @@ class VlnMultiEvaluator(Evaluator):
             if terminated and self.runner_status[env_id] != runner_status_code.TERMINATED:
                 obs = obs_ls[env_id]
                 reset_info = reset_infos[env_id]
-                if not __debug__:
-                    pass
-                log.info(json.dumps(obs['metrics']))
+                log.info(f"{self.now_path_key(reset_info)}: {json.dumps(obs['metrics'], indent=4)}")
                 self.data_collector.save_eval_result(
                     key=self.now_path_key(reset_info),
                     result=obs['metrics'][list(obs['metrics'].keys())[0]][0]['fail_reason'],
@@ -216,19 +218,29 @@ class VlnMultiEvaluator(Evaluator):
                     step_count=obs['metrics'][list(obs['metrics'].keys())[0]][0]['steps'],
                     result=obs['metrics'][list(obs['metrics'].keys())[0]][0]['fail_reason'],
                 )
+                # visualize
+                if self.vis_output:
+                    self.visualize_util.trace_end(
+                        trajectory_id=self.now_path_key(reset_info),
+                        result=obs['metrics'][list(obs['metrics'].keys())[0]][0]['fail_reason'],
+                    )
+                # json format result
+                if self.save_to_json:
+                    self.result_logger.write_now_result_json()
                 self.result_logger.write_now_result()
                 self.runner_status[env_id] = runner_status_code.NOT_RESET
                 log.info(f'env{env_id}: states switch to NOT_RESET.')
-        reset_env_ids = np.where(self.runner_status == runner_status_code.NOT_RESET)[  # need this status to reset
-            0
-        ].tolist()
+        # need this status to reset
+        reset_env_ids = np.where(self.runner_status == runner_status_code.NOT_RESET)[0].tolist()
         if len(reset_env_ids) > 0:
             log.info(f'env{reset_env_ids}: start new episode!')
             obs, new_reset_infos = self.env.reset(reset_env_ids)
             self.runner_status[reset_env_ids] = runner_status_code.WARM_UP
             log.info(f'env{reset_env_ids}: states switch to WARM UP.')
+
             # modify original reset_info
             reset_infos = np.array(reset_infos)
+            # If there is only one reset and no new_deset_infos, return an empty array
             reset_infos[reset_env_ids] = new_reset_infos if len(new_reset_infos) > 0 else None
             self.runner_status[
                 np.vectorize(lambda x: x)(reset_infos) == None  # noqa: E711
@@ -242,9 +254,15 @@ class VlnMultiEvaluator(Evaluator):
         for reset_info in new_reset_infos:
             if reset_info is None:
                 continue
+            # start new trace log
             progress_log_multi_util.trace_start(
                 trajectory_id=self.now_path_key(reset_info),
             )
+            # start new visualize log
+            if self.vis_output:
+                self.visualize_util.trace_start(
+                    trajectory_id=self.now_path_key(reset_info), reference_path=reset_info.data['reference_path']
+                )
         return False, reset_infos
 
     def eval(self):
@@ -257,6 +275,10 @@ class VlnMultiEvaluator(Evaluator):
             progress_log_multi_util.trace_start(
                 trajectory_id=self.now_path_key(info),
             )
+            if self.vis_output:
+                self.visualize_util.trace_start(
+                    trajectory_id=self.now_path_key(info), reference_path=info.data['reference_path']
+                )
         log.info('start new episode!')
 
         obs = self.warm_up()
@@ -277,6 +299,16 @@ class VlnMultiEvaluator(Evaluator):
             env_term, reset_info = self.terminate_ops(obs, reset_info, terminated)
             if env_term:
                 break
+
+            # save step obs
+            if self.vis_output:
+                for ob, info, act in zip(obs, reset_info, action):
+                    if info is None or 'rgb' not in ob or ob['fail_reason']:
+                        continue
+                    self.visualize_util.save_observation(
+                        trajectory_id=self.now_path_key(info), obs=ob, action=act[self.robot_name]
+                    )
+
         self.env.close()
         progress_log_multi_util.report()
 
